@@ -11,6 +11,7 @@
   let team = 'A'; // default; will be overwritten by store.user.team if available
   let storeReady = false;
 
+
   async function initStore() {
     if (storeReady) return;
     try {
@@ -48,7 +49,7 @@
 
 
 
-  let k = 3;
+  let k = 4;
   let modelTrained = false;
   let trainStatus = 'Model not trained yet';
   let prototypes = {}; // { className: { mean: number[], var: number[] , count: number } }
@@ -148,6 +149,52 @@
   let micStream = null;
   let mediaRecorder = null;
   let recordedChunks = [];
+  let isRecording = false;
+  let isUploading = false;
+
+  async function addSampleFromBlob(audioBlob) {
+    if (!audioContext) {
+      audioContext = new AudioContext();
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+    }
+
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(analyser);
+    source.start();
+
+    // wait a short moment so analyser has data
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const features = getAudioFeatures();
+    source.stop();
+
+    if (!features) {
+      alert('Could not extract features from uploaded audio');
+      return;
+    }
+
+    const v = currentValidator ? currentValidator() : null;
+    const id = nextSampleId++;
+
+    samples = [
+      ...samples,
+      {
+        id,
+        x: features,
+        y: selectedLabel,
+        validatorId: v?.id ?? null,
+        audioBlob,
+      },
+    ];
+    lastSaved = v
+      ? `✅ Uploaded sample for: ${selectedLabel} by ${v.name} (${v.role})`
+      : `✅ Uploaded sample for: ${selectedLabel}`;
+  }
 
   async function startMic() {
     if (micActive) {
@@ -193,16 +240,38 @@
   function getAudioFeatures() {
     if (!analyser) return null;
     const frames = [];
-    const frameCount = 8;         // 8 frames over ~1 s
+    const frameCount = 8; // 8 frames over ~1 s
+
     for (let i = 0; i < frameCount; i++) {
       const data = new Float32Array(analyser.frequencyBinCount);
-      analyser.getFloatFrequencyData(data);
-      const slice = Array.from(data.slice(0, 40)).map((v) => v / 100); // scale
+      analyser.getFloatFrequencyData(data); // values in dB (negative)
+      let slice = Array.from(data.slice(0, 40));
+
+      // 1) convert to magnitudes and compress (reduce effect of loudness)
+      slice = slice.map((v) => {
+        const mag = Math.pow(10, v / 20); // dB -> linear magnitude
+        return Math.log1p(mag);          // log(1 + mag)
+      });
+
+      // 2) normalize per frame (zero mean, unit variance)
+      const mean =
+        slice.reduce((sum, v) => sum + v, 0) / slice.length;
+      let varSum = 0;
+      for (const v of slice) {
+        const d = v - mean;
+        varSum += d * d;
+      }
+      const std = Math.sqrt(varSum / slice.length) || 1e-6;
+      slice = slice.map((v) => (v - mean) / std);
+
       frames.push(slice);
     }
+
+    // 3) average frames to get one feature vector
     const feat = new Array(frames[0].length).fill(0);
     frames.forEach((f) => f.forEach((v, i) => (feat[i] += v)));
     for (let i = 0; i < feat.length; i++) feat[i] /= frames.length;
+
     return feat;
   }
 
@@ -214,12 +283,27 @@
   let selectedLabel = 'door_knock';
   let lastSaved = '';
 
-  // validator roles
-  let validators = ['friend', 'family', 'colleague', 'self'];
-  let selectedValidator = 'friend';
+  // validator accounts: who is labeling for the user
+  let validators = [
+    { id: 1, name: 'Friend 1', role: 'friend', pin: '1111' },
+    { id: 2, name: 'Family 1', role: 'family', pin: '2222' },
+  ];
+
+  let selectedValidatorId = 1;
+  let typedPin = '';
+  let validatorError = '';
+
+  function currentValidator() {
+    return validators.find((v) => v.id === selectedValidatorId) || null;
+  }
 
   let contexts = ['home', 'university', 'night', 'with_baby'];
   let currentContext = 'home';
+
+  function validatorLabel(id) {
+    const v = validators.find((vv) => vv.id === id);
+    return v ? `${v.name} (${v.role})` : 'unknown';
+  }
 
   let activeByContext = {
     home: { door_knock: true, alarm: true, baby_cry: true, name_call: true },
@@ -308,8 +392,19 @@
   // ──────────────────────────────────────────────────────────────────────────
   // E. LABEL + RECORDING  (LOCAL FOR NOW)
   // ──────────────────────────────────────────────────────────────────────────
-  //let samples = []; // each: { id, x: number[], y: string, validator: string, audioBlob?: Blob }
+  //let samples = []; // each: { id, x: number[], y: string, validatorId: number, audioBlob?: Blob }
   async function recordSample() {
+    const v = currentValidator();
+    if (!v) {
+      alert('Please choose a validator');
+      return;
+    }
+    if (typedPin !== v.pin) {
+      validatorError = `Wrong code for ${v.name}`;
+      return;
+    }
+    validatorError = '';
+
     if (!micActive) {
       alert('Please start the microphone first!');
       return;
@@ -319,38 +414,49 @@
       return;
     }
 
-    recordedChunks = [];
-    mediaRecorder.start();
+    // If already recording, stop and save the sample
+    if (isRecording) {
+      mediaRecorder.stop();
+      isRecording = false;
 
-    // record for about 1 second
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    mediaRecorder.stop();
+      await new Promise((resolve) => {
+        mediaRecorder.onstop = () => resolve();
+      });
 
-    await new Promise((resolve) => {
-      mediaRecorder.onstop = () => resolve();
-    });
+      const audioBlob = new Blob(recordedChunks, { type: 'audio/webm' });
 
-    const audioBlob = new Blob(recordedChunks, { type: 'audio/webm' });
+      const features = getAudioFeatures();
+      if (!features) {
+        alert('Could not read audio features!');
+        return;
+      }
 
-    const features = getAudioFeatures();
-    if (!features) {
-      alert('Could not read audio features!');
+      const id = nextSampleId++;
+
+      samples = [
+        ...samples,
+        {
+          id,
+          x: features,
+          y: selectedLabel,
+          validatorId: currentValidator()?.id ?? null,
+          audioBlob,
+        },
+      ];
+      
+      const v = currentValidator();
+      lastSaved = v
+        ? `✅ Saved sample for: ${selectedLabel} by ${v.name} (${v.role})`
+        : `✅ Saved sample for: ${selectedLabel}`;
+
       return;
     }
 
-    const id = nextSampleId++;
-
-    samples = [
-      ...samples,
-      {
-        id,
-        x: features,
-        y: selectedLabel,
-        validator: selectedValidator,
-        audioBlob,
-      },
-    ];
-    lastSaved = `✅ Saved sample for: ${selectedLabel} (${selectedValidator})`;
+    // If not recording yet, start
+    recordedChunks = [];
+    mediaRecorder.start();
+    isRecording = true;
+    lastSaved = '🎙️ Recording... click again to stop';
   }
 
   function deleteSample(id) {
@@ -374,6 +480,10 @@
   let currentConfidence = 0;
   // NEW: list of all detected sounds above threshold
   let currentDetections = []; // each: { label, confidence }
+  // minimum confidence (%) for any label to be considered
+  const MIN_CONFIDENCE = 40;
+  // minimum difference (%) between best and second-best to trust a label
+  const MARGIN = 20;
 
 
   function startListening() {
@@ -394,6 +504,29 @@
 
       const result = protoPredict(features);
       const confs = result.confidences || {};
+      const entries = Object.entries(confs);
+      if (entries.length === 0) {
+        currentDetections = [];
+        currentPrediction = '';
+        currentConfidence = 0;
+        return;
+      }
+
+      // sort by confidence descending
+      entries.sort((a, b) => b[1] - a[1]);
+      const [bestLabelRaw, bestProb] = entries[0];
+      const bestConf = bestProb * 100;
+      const secondProb = entries[1]?.[1] ?? 0;
+      const secondConf = secondProb * 100;
+      const margin = bestConf - secondConf;
+
+      // If best is too low or not clearly ahead, treat as uncertain
+      if (bestConf < MIN_CONFIDENCE || margin < MARGIN) {
+        currentDetections = [];
+        currentPrediction = '';
+        currentConfidence = 0;
+        return;
+      }
 
       const detected = Object.entries(confs)
         .filter(([lab, p]) => {
@@ -488,15 +621,61 @@
 
     <label style="margin-left:1rem;">
       Validator:
-      <select bind:value={selectedValidator}>
+      <select bind:value={selectedValidatorId}>
         {#each validators as v}
-          <option value={v}>{v.toUpperCase()}</option>
+          <option value={v.id}>
+            {v.name} ({v.role})
+          </option>
         {/each}
       </select>
     </label>
 
+    <div style="margin-top:0.5rem;">
+      <label>
+        Validator code:
+        <input
+          type="password"
+          bind:value={typedPin}
+          style="margin-left:0.5rem; width:6rem;"
+        />
+      </label>
+      {#if validatorError}
+        <p style="color:#dc2626; margin:0.2rem 0 0 0;">
+          {validatorError}
+        </p>
+      {/if}
+    </div>
+
     <br /><br />
-    <button on:click={recordSample}>⏺ Record Sample</button>
+    <button on:click={recordSample}>
+      {isRecording ? '⏹ Stop Recording' : '⏺ Start Recording'}
+    </button>
+
+    <div style="margin-top:0.5rem;">
+      <label>
+        Or upload a sound file:
+        <input
+          type="file"
+          accept="audio/*"
+          on:change={async (e) => {
+            const file = e.currentTarget.files?.[0];
+            if (!file) return;
+            isUploading = true;
+            try {
+              await addSampleFromBlob(file);
+            } finally {
+              isUploading = false;
+              e.currentTarget.value = '';
+            }
+          }}
+          style="margin-left:0.5rem;"
+        />
+      </label>
+      {#if isUploading}
+        <span style="margin-left:0.5rem; font-size:0.9rem;">Processing upload…</span>
+      {/if}
+    </div>
+
     <p>{lastSaved}</p>
     <p>Total samples saved (local): <strong>{sampleCount}</strong></p>
   </section>
@@ -521,7 +700,7 @@
             <tr>
               <td>{s.id}</td>
               <td>{s.y.replace(/_/g, ' ')}</td>
-              <td>{s.validator}</td>
+              <td>{validatorLabel(s.validatorId)}</td>
               <td>
                 {#if s.audioBlob}
                   <audio
