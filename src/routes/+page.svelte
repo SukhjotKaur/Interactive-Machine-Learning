@@ -153,6 +153,18 @@
   let isUploading = false;
 
   async function addSampleFromBlob(audioBlob) {
+  // --- authentication, same as in recordSample ---
+    const v = currentValidator();
+    if (!v) {
+      alert('Please choose a validator');
+      return;
+    }
+    if (typedPin !== v.pin) {
+      validatorError = `Wrong code for ${v.name}`;
+      return;
+    }
+    validatorError = '';
+
     if (!audioContext) {
       audioContext = new AudioContext();
       analyser = audioContext.createAnalyser();
@@ -167,7 +179,6 @@
     source.connect(analyser);
     source.start();
 
-    // wait a short moment so analyser has data
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const features = getAudioFeatures();
@@ -178,7 +189,6 @@
       return;
     }
 
-    const v = currentValidator ? currentValidator() : null;
     const id = nextSampleId++;
 
     samples = [
@@ -187,14 +197,13 @@
         id,
         x: features,
         y: selectedLabel,
-        validatorId: v?.id ?? null,
+        validatorId: v.id,
         audioBlob,
       },
     ];
-    lastSaved = v
-      ? `✅ Uploaded sample for: ${selectedLabel} by ${v.name} (${v.role})`
-      : `✅ Uploaded sample for: ${selectedLabel}`;
+    lastSaved = `✅ Uploaded sample for: ${selectedLabel} by ${v.name} (${v.role})`;
   }
+
 
   async function startMic() {
     if (micActive) {
@@ -296,6 +305,14 @@
   function currentValidator() {
     return validators.find((v) => v.id === selectedValidatorId) || null;
   }
+
+  // NEW: derived auth flag
+  let isAuthenticated = false;
+  $: {
+    const v = currentValidator();
+    isAuthenticated = !!v && typedPin === v?.pin;
+  }
+
 
   let contexts = ['home', 'university', 'night', 'with_baby'];
   let currentContext = 'home';
@@ -657,23 +674,41 @@
         <input
           type="file"
           accept="audio/*"
-          on:change={async (e) => {
-            const file = e.currentTarget.files?.[0];
+          disabled={!isAuthenticated}
+          on:change={(event) => {
+            const input = event.currentTarget;
+            if (!input) return;
+
+            const file = input.files && input.files[0];
             if (!file) return;
+
             isUploading = true;
-            try {
-              await addSampleFromBlob(file);
-            } finally {
-              isUploading = false;
-              e.currentTarget.value = '';
-            }
+
+            addSampleFromBlob(file)
+              .catch((err) => {
+                console.error(err);
+                alert('Error while processing uploaded audio');
+              })
+              .finally(() => {
+                isUploading = false;
+                try {
+                  input.value = '';
+                } catch (e) {
+                  // ignore if already detached
+                }
+              });
           }}
           style="margin-left:0.5rem;"
         />
-      </label>
-      {#if isUploading}
-        <span style="margin-left:0.5rem; font-size:0.9rem;">Processing upload…</span>
-      {/if}
+
+        {#if !isAuthenticated}
+          <span style="margin-left:0.5rem; font-size:0.9rem; color:#6b7280;">
+            Enter a valid validator code to enable upload
+          </span>
+        {:else if isUploading}
+          <span style="margin-left:0.5rem; font-size:0.9rem;">Processing upload…</span>
+        {/if}
+
     </div>
 
     <p>{lastSaved}</p>
