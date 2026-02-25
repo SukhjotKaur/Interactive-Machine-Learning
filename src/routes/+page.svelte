@@ -10,6 +10,8 @@
 
   let team = 'A'; // default; will be overwritten by store.user.team if available
   let storeReady = false;
+  let lastFeedbackType = null; // 'correct' | 'wrong_label' | 'false_alarm' | null
+
 
 
   async function initStore() {
@@ -49,21 +51,72 @@
 
 
 
-  let k = 4;
+  let k = 3;
   let modelTrained = false;
   let trainStatus = 'Model not trained yet';
-  let prototypes = {}; // { className: { mean: number[], var: number[] , count: number } }
+  let prototypes = {}; // { className: { mean, variance, count } }
+  let globalNorm = null; // { mean, variance } over all samples
 
-  function trainModel() {
+  function computeGlobalNorm(samples) {
+    if (!samples.length) return null;
+    const dim = samples[0].x.length;
+    const mean = new Array(dim).fill(0);
+    const variance = new Array(dim).fill(0);
+
+    // mean
+    for (const s of samples) {
+      const x = s.x;
+      for (let i = 0; i < dim; i++) {
+        mean[i] += x[i];
+      }
+    }
+    for (let i = 0; i < dim; i++) {
+      mean[i] /= samples.length;
+    }
+
+    // variance
+    for (const s of samples) {
+      const x = s.x;
+      for (let i = 0; i < dim; i++) {
+        const d = x[i] - mean[i];
+        variance[i] += d * d;
+      }
+    }
+    for (let i = 0; i < dim; i++) {
+      variance[i] = variance[i] / samples.length || 1e-6;
+    }
+
+    return { mean, variance };
+  }
+
+  function applyGlobalNorm(vec, norm) {
+    const { mean, variance } = norm;
+    const dim = Math.min(vec.length, mean.length);
+    const out = new Array(dim);
+    for (let i = 0; i < dim; i++) {
+      const std = Math.sqrt(variance[i]) || 1e-3;
+      out[i] = (vec[i] - mean[i]) / std;
+    }
+    return out;
+  }
+
+    function trainModel() {
     if (samples.length < 2) {
       modelTrained = false;
       trainStatus = '❌ Need at least 2 samples';
       return;
     }
 
-    // group by class
+    // 1) compute global normalization over all samples
+    globalNorm = computeGlobalNorm(samples);
+    const normalizedSamples = samples.map((s) => ({
+      ...s,
+      x: applyGlobalNorm(s.x, globalNorm),
+    }));
+
+    // group by class using normalized features
     const byClass = {};
-    for (const s of samples) {
+    for (const s of normalizedSamples) {
       if (!byClass[s.y]) byClass[s.y] = [];
       byClass[s.y].push(s.x);
     }
@@ -83,7 +136,7 @@
         }),
       );
       for (let i = 0; i < dim; i++) {
-        variance[i] = variance[i] / vecs.length || 1e-3; // avoid zero
+        variance[i] = variance[i] / vecs.length || 1e-3;
       }
 
       prototypes[label] = { mean, variance, count: vecs.length };
@@ -93,20 +146,15 @@
     trainStatus = `✅ Prototype model with ${samples.length} samples`;
   }
 
-  function euclideanDistance(a, b) {
-    let s = 0;
-    const n = Math.min(a.length, b.length);
-    for (let i = 0; i < n; i++) {
-      const d = a[i] - b[i];
-      s += d * d;
-    }
-    return Math.sqrt(s);
-  }
-
   function protoPredict(x) {
     if (!modelTrained || !Object.keys(prototypes).length) {
       return { label: null, confidences: {} };
     }
+    if (!globalNorm) {
+      return { label: null, confidences: {} };
+    }
+
+    const xNorm = applyGlobalNorm(x, globalNorm);
 
     const scores = {};
     let bestLabel = null;
@@ -114,9 +162,9 @@
 
     for (const [label, { mean, variance }] of Object.entries(prototypes)) {
       let s = 0;
-      const dim = Math.min(x.length, mean.length);
+      const dim = Math.min(xNorm.length, mean.length);
       for (let i = 0; i < dim; i++) {
-        const d = x[i] - mean[i];
+        const d = xNorm[i] - mean[i];
         s += (d * d) / variance[i];
       }
       scores[label] = s;
@@ -136,7 +184,7 @@
       confidences[lab] = v / sumInv;
     }
 
-    return { label: bestLabel, confidences };
+    return { label: bestLabel, confidences, distance: bestScore };
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -497,11 +545,18 @@
   let currentConfidence = 0;
   // NEW: list of all detected sounds above threshold
   let currentDetections = []; // each: { label, confidence }
+  // Track last alarm event for feedback
+  let lastEvent = null; // { id, label, confidence, timestamp }
+  let feedbackLog = []; // array of feedback objects
+  let feedbackMode = null; // 'relabel' | null
+  let relabelClass = classes[0];
+
   // minimum confidence (%) for any label to be considered
   const MIN_CONFIDENCE = 40;
+  // maximum acceptable distance from prototype
+  //const MAX_DISTANCE = 50; // you added this above in A
   // minimum difference (%) between best and second-best to trust a label
-  const MARGIN = 20;
-
+  const MARGIN = 40;
 
   function startListening() {
     if (!modelTrained) {
@@ -520,6 +575,14 @@
       if (!features) return;
 
       const result = protoPredict(features);
+      if (!result.label) {
+        // protoPredict decided it's too far from all prototypes
+        currentDetections = [];
+        currentPrediction = '';
+        currentConfidence = 0;
+        return;
+      }
+
       const confs = result.confidences || {};
       const entries = Object.entries(confs);
       if (entries.length === 0) {
@@ -528,6 +591,7 @@
         currentConfidence = 0;
         return;
       }
+
 
       // sort by confidence descending
       entries.sort((a, b) => b[1] - a[1]);
@@ -557,16 +621,25 @@
 
       currentDetections = detected;
 
-      // keep old single-output vars for compatibility (highest one)
+            // keep old single-output vars for compatibility (highest one)
       if (detected.length > 0) {
         const best = detected.reduce((a, b) =>
           b.confidence > a.confidence ? b : a,
         );
         currentPrediction = best.label;
         currentConfidence = best.confidence;
+
+        const now = Date.now();
+        lastEvent = {
+          id: now,
+          label: best.label,
+          confidence: best.confidence,
+          timestamp: now,
+        };
       } else {
         currentPrediction = '';
         currentConfidence = 0;
+        lastEvent = null;
       }
     }, 1000);
   }
@@ -578,6 +651,38 @@
     currentConfidence = 0;
     currentDetections = [];
   }
+
+  function giveFeedback(type) {
+    if (!lastEvent) return;
+
+    lastFeedbackType = type;
+
+    if (type === 'correct') {
+      feedbackLog = [...feedbackLog, { ...lastEvent, feedback: 'correct' }];
+      feedbackMode = null;
+      return;
+    }
+    if (type === 'false_alarm') {
+      feedbackLog = [...feedbackLog, { ...lastEvent, feedback: 'false_alarm' }];
+      feedbackMode = null;
+      return;
+    }
+    if (type === 'wrong_label') {
+      feedbackMode = 'relabel';
+      relabelClass = classes[0];
+    }
+  }
+
+  function submitRelabel() {
+    if (!lastEvent || !relabelClass) return;
+    feedbackLog = [
+      ...feedbackLog,
+      { ...lastEvent, feedback: 'relabel', actual: relabelClass },
+    ];
+    feedbackMode = null;
+    lastFeedbackType = 'wrong_label';
+  }
+
 
 </script>
 
@@ -868,6 +973,37 @@
         <div class="pred-context">
           Context: {currentContext.replace('_', ' ').toUpperCase()}
         </div>
+      </div>
+    {/if}
+    {#if lastEvent}
+      <div style="margin-top:1rem;">
+        <p>
+          Was this alarm correct for
+          <strong>{lastEvent.label.replace(/_/g, ' ')}</strong>?
+        </p>
+        <button on:click={() => giveFeedback('correct')}>✅ Correct</button>
+        <button on:click={() => giveFeedback('wrong_label')} style="margin-left:0.5rem;">
+          ❌ Wrong label
+        </button>
+        <button on:click={() => giveFeedback('false_alarm')} style="margin-left:0.5rem;">
+          🚫 False alarm
+        </button>
+
+        {#if feedbackMode === 'relabel'}
+          <div style="margin-top:0.5rem;">
+            <label>
+              Actual class:
+              <select bind:value={relabelClass} style="margin-left:0.5rem;">
+                {#each classes as cls}
+                  <option value={cls}>{cls.replace(/_/g, ' ')}</option>
+                {/each}
+              </select>
+            </label>
+            <button on:click={submitRelabel} style="margin-left:0.5rem;">
+              Save feedback
+            </button>
+          </div>
+        {/if}
       </div>
     {/if}
 
