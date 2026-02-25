@@ -42,12 +42,16 @@
   // ──────────────────────────────────────────────────────────────────────────
   // B. SIMPLE MANUAL KNN (NO TF, LOCAL DATA)
   // ──────────────────────────────────────────────────────────────────────────
-  let samples = []; // each: { x: number[], y: string, validator: string }
+  let samples = []; // each: { id, x: number[], y: string, validator: string, audioBlob?: Blob }
+  let nextSampleId = 1;
   $: sampleCount = samples.length;
+
+
 
   let k = 3;
   let modelTrained = false;
   let trainStatus = 'Model not trained yet';
+  let prototypes = {}; // { className: { mean: number[], var: number[] , count: number } }
 
   function trainModel() {
     if (samples.length < 2) {
@@ -55,8 +59,37 @@
       trainStatus = '❌ Need at least 2 samples';
       return;
     }
+
+    // group by class
+    const byClass = {};
+    for (const s of samples) {
+      if (!byClass[s.y]) byClass[s.y] = [];
+      byClass[s.y].push(s.x);
+    }
+
+    prototypes = {};
+    for (const [label, vecs] of Object.entries(byClass)) {
+      const dim = vecs[0].length;
+      const mean = new Array(dim).fill(0);
+      vecs.forEach((v) => v.forEach((x, i) => (mean[i] += x)));
+      for (let i = 0; i < dim; i++) mean[i] /= vecs.length;
+
+      const variance = new Array(dim).fill(0);
+      vecs.forEach((v) =>
+        v.forEach((x, i) => {
+          const d = x - mean[i];
+          variance[i] += d * d;
+        }),
+      );
+      for (let i = 0; i < dim; i++) {
+        variance[i] = variance[i] / vecs.length || 1e-3; // avoid zero
+      }
+
+      prototypes[label] = { mean, variance, count: vecs.length };
+    }
+
     modelTrained = true;
-    trainStatus = `✅ Model ready with ${samples.length} samples`;
+    trainStatus = `✅ Prototype model with ${samples.length} samples`;
   }
 
   function euclideanDistance(a, b) {
@@ -69,36 +102,37 @@
     return Math.sqrt(s);
   }
 
-  function knnPredict(x) {
-    if (!modelTrained || samples.length === 0) {
+  function protoPredict(x) {
+    if (!modelTrained || !Object.keys(prototypes).length) {
       return { label: null, confidences: {} };
     }
 
-    const dists = samples.map((s, idx) => ({
-      idx,
-      dist: euclideanDistance(x, s.x),
-    }));
-    dists.sort((a, b) => a.dist - b.dist);
-
-    const kUsed = Math.min(k, dists.length);
-    const votes = {};
-    for (let i = 0; i < kUsed; i++) {
-      const label = samples[dists[i].idx].y;
-      votes[label] = (votes[label] || 0) + 1;
-    }
-
+    const scores = {};
     let bestLabel = null;
-    let bestVotes = -1;
-    for (const [lab, v] of Object.entries(votes)) {
-      if (v > bestVotes) {
-        bestVotes = v;
-        bestLabel = lab;
+    let bestScore = Infinity;
+
+    for (const [label, { mean, variance }] of Object.entries(prototypes)) {
+      let s = 0;
+      const dim = Math.min(x.length, mean.length);
+      for (let i = 0; i < dim; i++) {
+        const d = x[i] - mean[i];
+        s += (d * d) / variance[i];
+      }
+      scores[label] = s;
+      if (s < bestScore) {
+        bestScore = s;
+        bestLabel = label;
       }
     }
 
+    // convert distances to pseudo‑confidences
     const confidences = {};
-    for (const [lab, v] of Object.entries(votes)) {
-      confidences[lab] = v / kUsed;
+    const invScores = Object.fromEntries(
+      Object.entries(scores).map(([lab, s]) => [lab, 1 / (1 + s)]),
+    );
+    const sumInv = Object.values(invScores).reduce((a, b) => a + b, 0);
+    for (const [lab, v] of Object.entries(invScores)) {
+      confidences[lab] = v / sumInv;
     }
 
     return { label: bestLabel, confidences };
@@ -112,10 +146,15 @@
   let micActive = false;
   let micStatus = 'Microphone is OFF';
   let micStream = null;
+  let mediaRecorder = null;
+  let recordedChunks = [];
 
   async function startMic() {
     if (micActive) {
-      // Turn off
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      recordedChunks = [];
       if (micStream) micStream.getTracks().forEach((t) => t.stop());
       if (audioContext) await audioContext.close();
       micStream = null;
@@ -123,10 +162,10 @@
       analyser = null;
       micActive = false;
       micStatus = 'Microphone is OFF';
+      mediaRecorder = null;
       return;
     }
 
-    // Turn on
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioContext = new AudioContext();
@@ -136,6 +175,15 @@
       source.connect(analyser);
       micActive = true;
       micStatus = '✅ Microphone is ON';
+
+      // MediaRecorder for saving audio snippets
+      recordedChunks = [];
+      mediaRecorder = new MediaRecorder(micStream);
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordedChunks.push(e.data);
+        }
+      };
     } catch (err) {
       console.error(err);
       micStatus = '❌ Microphone access denied';
@@ -144,10 +192,20 @@
 
   function getAudioFeatures() {
     if (!analyser) return null;
-    const data = new Float32Array(analyser.frequencyBinCount);
-    analyser.getFloatFrequencyData(data);
-    return Array.from(data.slice(0, 40));
+    const frames = [];
+    const frameCount = 8;         // 8 frames over ~1 s
+    for (let i = 0; i < frameCount; i++) {
+      const data = new Float32Array(analyser.frequencyBinCount);
+      analyser.getFloatFrequencyData(data);
+      const slice = Array.from(data.slice(0, 40)).map((v) => v / 100); // scale
+      frames.push(slice);
+    }
+    const feat = new Array(frames[0].length).fill(0);
+    frames.forEach((f) => f.forEach((v, i) => (feat[i] += v)));
+    for (let i = 0; i < feat.length; i++) feat[i] /= frames.length;
+    return feat;
   }
+
 
   // ──────────────────────────────────────────────────────────────────────────
   // D. CLASSES, PERSONALIZATION & VALIDATOR ROLES
@@ -250,11 +308,29 @@
   // ──────────────────────────────────────────────────────────────────────────
   // E. LABEL + RECORDING  (LOCAL FOR NOW)
   // ──────────────────────────────────────────────────────────────────────────
+  //let samples = []; // each: { id, x: number[], y: string, validator: string, audioBlob?: Blob }
   async function recordSample() {
     if (!micActive) {
       alert('Please start the microphone first!');
       return;
     }
+    if (!mediaRecorder) {
+      alert('Recorder not ready');
+      return;
+    }
+
+    recordedChunks = [];
+    mediaRecorder.start();
+
+    // record for about 1 second
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    mediaRecorder.stop();
+
+    await new Promise((resolve) => {
+      mediaRecorder.onstop = () => resolve();
+    });
+
+    const audioBlob = new Blob(recordedChunks, { type: 'audio/webm' });
 
     const features = getAudioFeatures();
     if (!features) {
@@ -262,38 +338,43 @@
       return;
     }
 
+    const id = nextSampleId++;
+
     samples = [
       ...samples,
       {
+        id,
         x: features,
         y: selectedLabel,
         validator: selectedValidator,
+        audioBlob,
       },
     ];
     lastSaved = `✅ Saved sample for: ${selectedLabel} (${selectedValidator})`;
-
-    /*
-    // TODO when backend works: replace with shared dataset
-    await initStore();
-    const instance = {
-      x: { features },
-      y: selectedLabel,
-      team,
-      public: true,
-      validator: selectedValidator,
-    };
-    await trainingSet.create(instance);
-    lastSaved = `✅ Saved sample for: ${selectedLabel} (${selectedValidator}) (team ${team})`;
-    */
   }
+
+  function deleteSample(id) {
+    samples = samples.filter((s) => s.id !== id);
+  }
+
+  function changeSampleLabel(id, newLabel) {
+    samples = samples.map((s) =>
+      s.id === id ? { ...s, y: newLabel } : s,
+    );
+  }
+
 
   // ──────────────────────────────────────────────────────────────────────────
   // F. LIVE PREDICTION
   // ──────────────────────────────────────────────────────────────────────────
   let listening = false;
   let predictionInterval = null;
+  // old single-output state (kept for now but no longer used in UI)
   let currentPrediction = '';
   let currentConfidence = 0;
+  // NEW: list of all detected sounds above threshold
+  let currentDetections = []; // each: { label, confidence }
+
 
   function startListening() {
     if (!modelTrained) {
@@ -311,21 +392,28 @@
       const features = getAudioFeatures();
       if (!features) return;
 
-      const result = knnPredict(features);
-      const label = result.label;
-      if (!label) {
-        currentPrediction = '';
-        currentConfidence = 0;
-        return;
-      }
-      const conf = (result.confidences[label] ?? 0) * 100;
+      const result = protoPredict(features);
+      const confs = result.confidences || {};
 
-      const active = isClassActiveInContext(currentContext, label);
-      const passesThreshold = conf >= sensitivity;
+      const detected = Object.entries(confs)
+        .filter(([lab, p]) => {
+          const pct = p * 100;
+          return isClassActiveInContext(currentContext, lab) && pct >= sensitivity;
+        })
+        .map(([lab, p]) => ({
+          label: lab,
+          confidence: Math.round(p * 100),
+        }));
 
-      if (active && passesThreshold) {
-        currentPrediction = label;
-        currentConfidence = Math.round(conf);
+      currentDetections = detected;
+
+      // keep old single-output vars for compatibility (highest one)
+      if (detected.length > 0) {
+        const best = detected.reduce((a, b) =>
+          b.confidence > a.confidence ? b : a,
+        );
+        currentPrediction = best.label;
+        currentConfidence = best.confidence;
       } else {
         currentPrediction = '';
         currentConfidence = 0;
@@ -338,7 +426,9 @@
     clearInterval(predictionInterval);
     currentPrediction = '';
     currentConfidence = 0;
+    currentDetections = [];
   }
+
 </script>
 
 <main>
@@ -410,6 +500,57 @@
     <p>{lastSaved}</p>
     <p>Total samples saved (local): <strong>{sampleCount}</strong></p>
   </section>
+
+  <!-- 2a. Recorded samples -->
+  <section>
+    <h2>2a. Recorded Samples</h2>
+    {#if samples.length === 0}
+      <p>No samples recorded yet.</p>
+    {:else}
+      <table border="1" cellpadding="4" cellspacing="0">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Class</th>
+            <th>Validator</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each samples as s}
+            <tr>
+              <td>{s.id}</td>
+              <td>{s.y.replace(/_/g, ' ')}</td>
+              <td>{s.validator}</td>
+              <td>
+                {#if s.audioBlob}
+                  <audio
+                    src={URL.createObjectURL(s.audioBlob)}
+                    controls
+                    style="max-width:200px; display:block; margin-bottom:0.3rem;"
+                  ></audio>
+                {/if}
+                <button on:click={() => deleteSample(s.id)}>
+                  Delete
+                </button>
+                <select
+                  on:change={(e) => changeSampleLabel(s.id, e.target.value)}
+                  style="margin-left:0.5rem;"
+                >
+                  {#each classes as cls}
+                    <option value={cls} selected={cls === s.y}>
+                      {cls.replace(/_/g, ' ')}
+                    </option>
+                  {/each}
+                </select>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  </section>
+
 
   <!-- 2b. Class Manager -->
   <section>
@@ -500,15 +641,22 @@
       <button on:click={stopListening} style="background:#dc2626">⏹ Stop Listening</button>
     {/if}
 
-    {#if currentPrediction}
+    {#if currentDetections.length}
       <div class="prediction-box">
-        <div class="pred-label">{currentPrediction.replace(/_/g, ' ').toUpperCase()}</div>
-        <div class="pred-confidence">Confidence: {currentConfidence}%</div>
+        <h3>Detected sounds</h3>
+        <ul>
+          {#each currentDetections as d}
+            <li>
+              {d.label.replace(/_/g, ' ').toUpperCase()} – {d.confidence}%
+            </li>
+          {/each}
+        </ul>
         <div class="pred-context">
           Context: {currentContext.replace('_', ' ').toUpperCase()}
         </div>
       </div>
     {/if}
+
   </section>
 </main>
 
