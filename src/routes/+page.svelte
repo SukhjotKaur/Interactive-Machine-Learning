@@ -202,14 +202,16 @@
 
   async function addSampleFromBlob(audioBlob) {
   // --- authentication, same as in recordSample ---
-    const v = currentValidator();
-    if (!v) {
-      alert('Please choose a validator');
-      return;
-    }
-    if (typedPin !== v.pin) {
-      validatorError = `Wrong code for ${v.name}`;
-      return;
+  const v = currentValidator();
+    if (useValidators) {
+      if (!v) {
+        alert('Please choose a validator');
+        return;
+      }
+      if (typedPin !== v.pin) {
+        validatorError = `Wrong code for ${v.name}`;
+        return;
+      }
     }
     validatorError = '';
 
@@ -350,6 +352,8 @@
   let typedPin = '';
   let validatorError = '';
 
+  let useValidators = true;
+
   function currentValidator() {
     return validators.find((v) => v.id === selectedValidatorId) || null;
   }
@@ -357,10 +361,13 @@
   // NEW: derived auth flag
   let isAuthenticated = false;
   $: {
-    const v = currentValidator();
-    isAuthenticated = !!v && typedPin === v?.pin;
+    if (!useValidators) {
+      isAuthenticated = true;
+    } else {
+      const v = currentValidator();
+      isAuthenticated = !!v && typedPin === v?.pin;
+    }
   }
-
 
   let contexts = ['home', 'university', 'night', 'with_baby'];
   let currentContext = 'home';
@@ -550,6 +557,8 @@
   let feedbackLog = []; // array of feedback objects
   let feedbackMode = null; // 'relabel' | null
   let relabelClass = classes[0];
+  let lastFeedbackType = null; // 'correct' | 'wrong_label' | 'false_alarm' | null
+  let feedbackStatus = ''; // short text shown after feedback
 
   // minimum confidence (%) for any label to be considered
   const MIN_CONFIDENCE = 40;
@@ -621,6 +630,8 @@
 
       currentDetections = detected;
 
+      feedbackStatus = '';
+
             // keep old single-output vars for compatibility (highest one)
       if (detected.length > 0) {
         const best = detected.reduce((a, b) =>
@@ -635,6 +646,7 @@
           label: best.label,
           confidence: best.confidence,
           timestamp: now,
+          features,
         };
       } else {
         currentPrediction = '';
@@ -660,27 +672,49 @@
     if (type === 'correct') {
       feedbackLog = [...feedbackLog, { ...lastEvent, feedback: 'correct' }];
       feedbackMode = null;
+      feedbackStatus = '✅ Marked as correct';
       return;
     }
     if (type === 'false_alarm') {
       feedbackLog = [...feedbackLog, { ...lastEvent, feedback: 'false_alarm' }];
       feedbackMode = null;
+      feedbackStatus = '🚫 Marked as false alarm';
       return;
     }
     if (type === 'wrong_label') {
       feedbackMode = 'relabel';
       relabelClass = classes[0];
+      feedbackStatus = '❌ Please choose the correct class';
     }
   }
 
   function submitRelabel() {
     if (!lastEvent || !relabelClass) return;
+
+    // 1) log feedback
     feedbackLog = [
       ...feedbackLog,
       { ...lastEvent, feedback: 'relabel', actual: relabelClass },
     ];
     feedbackMode = null;
     lastFeedbackType = 'wrong_label';
+
+    // 2) add a corrected training sample (if we have features)
+    if (lastEvent.features) {
+      const id = nextSampleId++;
+      samples = [
+        ...samples,
+        {
+          id,
+          x: lastEvent.features,
+          y: relabelClass,
+          validatorId: currentValidator()?.id ?? null,
+          audioBlob: null,
+        },
+      ];
+      lastSaved = `✅ Added corrected sample as ${relabelClass.replace(/_/g, ' ')}`;
+      feedbackStatus = `✅ Saved relabel as ${relabelClass.replace(/_/g, ' ')}`;
+    }
   }
 
 
@@ -719,6 +753,17 @@
       </label>
     </div>
   </section>
+  <div style="margin-top:0.5rem;">
+    <label>
+      <input
+        type="checkbox"
+        bind:checked={useValidators}
+        style="margin-right:0.4rem;"
+      />
+      Enable validators (friends / family label sounds)
+    </label>
+  </div>
+
 
   <!-- 1. Microphone -->
   <section>
@@ -743,7 +788,7 @@
 
     <label style="margin-left:1rem;">
       Validator:
-      <select bind:value={selectedValidatorId}>
+      <select bind:value={selectedValidatorId} disabled={!useValidators}>
         {#each validators as v}
           <option value={v.id}>
             {v.name} ({v.role})
@@ -752,21 +797,23 @@
       </select>
     </label>
 
-    <div style="margin-top:0.5rem;">
-      <label>
-        Validator code:
-        <input
-          type="password"
-          bind:value={typedPin}
-          style="margin-left:0.5rem; width:6rem;"
-        />
-      </label>
-      {#if validatorError}
-        <p style="color:#dc2626; margin:0.2rem 0 0 0;">
-          {validatorError}
-        </p>
-      {/if}
-    </div>
+    {#if useValidators}
+      <div style="margin-top:0.5rem;">
+        <label>
+          Validator code:
+          <input
+            type="password"
+            bind:value={typedPin}
+            style="margin-left:0.5rem; width:6rem;"
+          />
+        </label>
+        {#if validatorError}
+          <p style="color:#dc2626; margin:0.2rem 0 0 0;">
+            {validatorError}
+          </p>
+        {/if}
+      </div>
+    {/if}
 
     <br /><br />
     <button on:click={recordSample}>
@@ -779,7 +826,7 @@
         <input
           type="file"
           accept="audio/*"
-          disabled={!isAuthenticated}
+          disabled={useValidators && !isAuthenticated}
           on:change={(event) => {
             const input = event.currentTarget;
             if (!input) return;
@@ -1004,8 +1051,15 @@
             </button>
           </div>
         {/if}
+
+        {#if feedbackStatus}
+          <p style="margin-top:0.5rem; color:#16a34a;">
+            {feedbackStatus}
+          </p>
+        {/if}
       </div>
     {/if}
+
 
   </section>
 </main>
