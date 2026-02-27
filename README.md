@@ -1,64 +1,88 @@
-# ~TODO~
+README.md
+Context-Aware Personalized Sound Classifier
 
-> A [Marcelle](https://marcelle.dev) Application
+An interactive sound recognition prototype built with Marcelle and Svelte.
 
-## Available Scripts
+This application is designed specifically for Deaf or Hard-of-Hearing (DHH) users and their close circles. It allows users to define custom sound classes, record environmental examples, train a prototype-based model directly in the browser, and provide real-time feedback to refine predictions.
+🚀 Quick Start
+1. Prerequisites
 
-### npm run dev
+Ensure you have a recent LTS version of Node.js installed.
+Bash
 
-Runs the app in the development mode.
-Open http://localhost:5173 to view it in the browser.
+node -v
+npm -v
 
-The page will reload if you make edits.
+2. Installation
 
-### npm run build
+Clone the repository and install the dependencies:
+Bash
 
-Builds a static copy of your site to the `dist/` folder.
-Your app is ready to be deployed!
-
-How to run the app
-Install Node.js
-
-Install a recent LTS version of Node.js from https://nodejs.org.
-​
-
-Download the project
-
-Put all project files (including package.json, src, etc.) in a folder, for example sound-classifier.
-
-Install dependencies
-
-Open a terminal in that folder and run:
-
-bash
+cd sound-classifier
 npm install
-This installs all packages listed in package.json.
-​
 
-Start the development server
+3. Run Development Server
+Bash
 
-In the same folder, run:
-
-bash
-npm run dev -- --open
-or, if --open isn’t configured:
-
-bash
 npm run dev
-Then open the URL printed in the terminal (usually http://localhost:5173 or http://localhost:8080) in a browser.
 
-Use the interface
+Open http://localhost:5173 in your browser. The page will hot-reload as you make edits.
+🛠 Features & Workflow
+Step 1: Personalization
 
-Step 1: Click “Start Microphone” and allow mic access in the browser.
+    Context Selection: Define your environment (e.g., Home, University, Night, With Baby).
 
-Step 2: Choose a sound class and validator, enter the validator code, then click “Start Recording” / “Stop Recording” to record examples.
+    Sensitivity Control: Adjust the slider to determine how "cautious" the alerting system should be.
 
-Step 3: Click “🧠 Prepare Model” to train on your recorded samples.
+Step 2: Audio Capture & Management
 
-Step 4: Click “Start Listening” to enable live predictions.
+    Live Recording: Toggle the microphone to capture real-world sounds (e.g., door knocks, alarms).
 
-When an alarm appears, use the Correct / Wrong label / False alarm buttons to give feedback.
+    Validation: Supports a "Validator" mode requiring a PIN code for verified sample entry.
 
-Stop the app
+    Sample Management: Play back, re-label, or delete recordings within the interface.
 
-In the terminal, press Ctrl + C to stop the dev server.
+    File Upload: Supports importing existing audio files.
+
+Step 3: In-Browser Training
+
+    Model Preparation: Trains a prototype-based classifier using your local samples.
+
+    Privacy First: All training happens locally in the browser; no audio data is sent to a server.
+
+Step 4: Live Prediction & Feedback
+
+    Real-time Recognition: Visual alerts appear when relevant sounds are detected.
+
+    Active Learning: Refine the model on the fly:
+
+        Correct: Validates the current model.
+
+        Wrong Label: Allows you to re-assign the sound and add it to training data.
+
+        False Alarm: Helps the model learn to ignore background noise.
+
+🏗 Technology Stack
+
+    Marcelle: For interactive Machine Learning components and pipeline management.
+
+    Svelte + Vite: For a high-performance, reactive user interface.
+
+    Web Audio API: Utilizes AudioContext, AnalyserNode, and MediaRecorder for client-side signal processing.
+
+📝 Roadmap / TODO
+
+    [ ] Robustness: Improve audio feature extraction for noisy environments/low-quality mics.
+
+    [ ] Benchmarking: Compare the current prototype classifier against a KNN baseline.
+
+    [ ] Persistence: Implement storage (IndexedDB/LocalStorage) for saved samples and trained models.
+
+    [ ] Accessibility: Conduct a deep dive into ARIA labels, keyboard navigation, and screen reader compatibility.
+
+    [ ] Evaluation: Execute planned human-centered trials with DHH users and validators.
+
+Commands'	Description
+npm run dev	Starts the local dev server at port 5173.
+npm run build	Creates a production-ready static bundle in /dist.
+npm run preview	Previews the production build locally.
