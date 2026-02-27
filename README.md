@@ -1,4 +1,3 @@
-README.md
 Context-Aware Personalized Sound Classifier
 
 An interactive sound recognition prototype built with Marcelle and Svelte.
@@ -9,7 +8,6 @@ This application is designed specifically for Deaf or Hard-of-Hearing (DHH) user
 
 Ensure you have a recent LTS version of Node.js installed.
 Bash
-
 node -v
 npm -v
 
