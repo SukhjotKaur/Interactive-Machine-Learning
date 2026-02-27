@@ -3,6 +3,17 @@
   import '@marcellejs/core/dist/marcelle.css';
 
   // ──────────────────────────────────────────────────────────────────────────
+  // TABS
+  // ──────────────────────────────────────────────────────────────────────────
+  const tabs = [
+    { id: 'personalization', label: 'Personalization' },
+    { id: 'recording', label: 'Microphone & Samples' },
+    { id: 'classes', label: 'Class Manager' },
+    { id: 'model', label: 'Model & Live Prediction' },
+  ];
+  let activeTab = 'personalization';
+
+  // ──────────────────────────────────────────────────────────────────────────
   // A. UNIVERSITY SHARED DATASTORE (DISABLED WHILE BACKEND IS DOWN)
   // ──────────────────────────────────────────────────────────────────────────
   /*
@@ -11,8 +22,6 @@
   let team = 'A'; // default; will be overwritten by store.user.team if available
   let storeReady = false;
   let lastFeedbackType = null; // 'correct' | 'wrong_label' | 'false_alarm' | null
-
-
 
   async function initStore() {
     if (storeReady) return;
@@ -43,13 +52,11 @@
   let count = { subscribe: (fn) => fn(0) }; // dummy Svelte store for UI text
 
   // ──────────────────────────────────────────────────────────────────────────
-  // B. SIMPLE MANUAL KNN (NO TF, LOCAL DATA)
+  // B. SIMPLE MANUAL KNN
   // ──────────────────────────────────────────────────────────────────────────
   let samples = []; // each: { id, x: number[], y: string, validator: string, audioBlob?: Blob }
   let nextSampleId = 1;
   $: sampleCount = samples.length;
-
-
 
   let k = 3;
   let modelTrained = false;
@@ -100,7 +107,7 @@
     return out;
   }
 
-    function trainModel() {
+  function trainModel() {
     if (samples.length < 2) {
       modelTrained = false;
       trainStatus = '❌ Need at least 2 samples';
@@ -201,8 +208,8 @@
   let isUploading = false;
 
   async function addSampleFromBlob(audioBlob) {
-  // --- authentication, same as in recordSample ---
-  const v = currentValidator();
+    // --- authentication, same as in recordSample ---
+    const v = currentValidator();
     if (useValidators) {
       if (!v) {
         alert('Please choose a validator');
@@ -253,7 +260,6 @@
     ];
     lastSaved = `✅ Uploaded sample for: ${selectedLabel} by ${v.name} (${v.role})`;
   }
-
 
   async function startMic() {
     if (micActive) {
@@ -309,12 +315,11 @@
       // 1) convert to magnitudes and compress (reduce effect of loudness)
       slice = slice.map((v) => {
         const mag = Math.pow(10, v / 20); // dB -> linear magnitude
-        return Math.log1p(mag);          // log(1 + mag)
+        return Math.log1p(mag); // log(1 + mag)
       });
 
       // 2) normalize per frame (zero mean, unit variance)
-      const mean =
-        slice.reduce((sum, v) => sum + v, 0) / slice.length;
+      const mean = slice.reduce((sum, v) => sum + v, 0) / slice.length;
       let varSum = 0;
       for (const v of slice) {
         const d = v - mean;
@@ -333,7 +338,6 @@
 
     return feat;
   }
-
 
   // ──────────────────────────────────────────────────────────────────────────
   // D. CLASSES, PERSONALIZATION & VALIDATOR ROLES
@@ -464,7 +468,6 @@
   // ──────────────────────────────────────────────────────────────────────────
   // E. LABEL + RECORDING  (LOCAL FOR NOW)
   // ──────────────────────────────────────────────────────────────────────────
-  //let samples = []; // each: { id, x: number[], y: string, validatorId: number, audioBlob?: Blob }
   async function recordSample() {
     const v = currentValidator();
     if (!v) {
@@ -515,10 +518,10 @@
           audioBlob,
         },
       ];
-      
-      const v = currentValidator();
-      lastSaved = v
-        ? `✅ Saved sample for: ${selectedLabel} by ${v.name} (${v.role})`
+
+      const v2 = currentValidator();
+      lastSaved = v2
+        ? `✅ Saved sample for: ${selectedLabel} by ${v2.name} (${v2.role})`
         : `✅ Saved sample for: ${selectedLabel}`;
 
       return;
@@ -536,11 +539,8 @@
   }
 
   function changeSampleLabel(id, newLabel) {
-    samples = samples.map((s) =>
-      s.id === id ? { ...s, y: newLabel } : s,
-    );
+    samples = samples.map((s) => (s.id === id ? { ...s, y: newLabel } : s));
   }
-
 
   // ──────────────────────────────────────────────────────────────────────────
   // F. LIVE PREDICTION
@@ -562,8 +562,6 @@
 
   // minimum confidence (%) for any label to be considered
   const MIN_CONFIDENCE = 40;
-  // maximum acceptable distance from prototype
-  //const MAX_DISTANCE = 50; // you added this above in A
   // minimum difference (%) between best and second-best to trust a label
   const MARGIN = 40;
 
@@ -585,7 +583,6 @@
 
       const result = protoPredict(features);
       if (!result.label) {
-        // protoPredict decided it's too far from all prototypes
         currentDetections = [];
         currentPrediction = '';
         currentConfidence = 0;
@@ -600,7 +597,6 @@
         currentConfidence = 0;
         return;
       }
-
 
       // sort by confidence descending
       entries.sort((a, b) => b[1] - a[1]);
@@ -632,11 +628,9 @@
 
       feedbackStatus = '';
 
-            // keep old single-output vars for compatibility (highest one)
+      // keep old single-output vars for compatibility (highest one)
       if (detected.length > 0) {
-        const best = detected.reduce((a, b) =>
-          b.confidence > a.confidence ? b : a,
-        );
+        const best = detected.reduce((a, b) => (b.confidence > a.confidence ? b : a));
         currentPrediction = best.label;
         currentConfidence = best.confidence;
 
@@ -716,44 +710,115 @@
       feedbackStatus = `✅ Saved relabel as ${relabelClass.replace(/_/g, ' ')}`;
     }
   }
-
-
 </script>
 
 <main>
-  <h1>🔊 Context-Aware Personalized Sound Classifier (Local)</h1>
+  <h1>Context-Aware Personalized Sound Classifier</h1>
 
-  <!-- 0. Personalization -->
-  <section>
-    <h2>0. Personalization</h2>
-    <p>Select your current context and how sensitive alerts should be.</p>
+  <!-- Tabs -->
+  <div class="tabs">
+  {#each tabs as tab}
+    <button
+      class:active={activeTab === tab.id}
+      on:click={() => (activeTab = tab.id)}
+    >
+      {tab.label}
+    </button>
+  {/each}
+</div>
 
-    <div style="margin-bottom:0.5rem;">
-      <label>
-        Context:
+  <!-- TAB 1: Personalization -->
+  {#if activeTab === 'personalization'}
+    <section class="card">
+      <h2>Select your current context and how sensitive alerts should be.</h2>
+       <div class="personalization-row">
+    <div class="personalization-labels">
+      <div>Context:</div>
+      
+      <div>Sensitivity (alert threshold):</div>
+    </div>
+    
+
+    <div class="personalization-controls">
+      <div>
         <select bind:value={currentContext}>
           {#each contexts as ctx}
             <option value={ctx}>{ctx.replace('_', ' ').toUpperCase()}</option>
           {/each}
         </select>
-      </label>
-    </div>
+      </div>
 
-    <div>
-      <label>
-        Sensitivity (alert threshold): {sensitivity}%
+      <div class="sensitivity-control">
+        
         <input
           type="range"
           min="0"
           max="100"
           step="5"
           bind:value={sensitivity}
-          style="margin-left:0.5rem;"
         />
-      </label>
+        <span>{sensitivity}%</span>
+      </div>
     </div>
-  </section>
-  <div style="margin-top:0.5rem;">
+  </div>
+
+ 
+      
+    </section>
+  {/if}
+
+  <!-- TAB 2: Microphone & Samples -->
+  {#if activeTab === 'recording'}
+    <section class="card">
+      <h2>1. To start catching signal turn on the Microphone</h2>
+      <div class="mic-row">
+  <span class="mic-label">Microphone</span>
+
+  <button
+    class="mic-toggle"
+    class:on={micActive}
+    on:click={startMic}
+    aria-pressed={micActive}
+  >
+    <span class="mic-knob"></span>
+  </button>
+
+  <span class="mic-status-text">
+    {micActive ? 'ON' : 'OFF'}
+  </span>
+</div>
+
+
+    </section>
+
+ <section class="card">
+  <h2>2. Record Sound Samples</h2>
+  
+
+
+
+  <div class="record-top-row">
+    <div class="record-field">
+      <span class="record-label"> Sound class</span>
+      <select bind:value={selectedLabel}>
+        {#each classes as cls}
+          <option value={cls}>{cls.replace(/_/g, ' ')}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div class="record-field">
+      <span class="record-label"> Validator</span>
+      <select bind:value={selectedValidatorId} disabled={!useValidators}>
+        {#each validators as v}
+          <option value={v.id}>
+            {v.name} ({v.role})
+          </option>
+        {/each}
+      </select>
+    </div>
+  </div>
+<div style="margin-top:2rem;">
     <label>
       <input
         type="checkbox"
@@ -763,66 +828,37 @@
       Enable validators (friends / family label sounds)
     </label>
   </div>
+  {#if useValidators}
 
-
-  <!-- 1. Microphone -->
-  <section>
-    <h2>1. Start Microphone</h2>
-    <p>{micStatus}</p>
-    <button on:click={startMic}>{micActive ? 'Stop Microphone' : 'Start Microphone'}</button>
-  </section>
-
-  <!-- 2. Record samples -->
-  <section>
-    <h2>2. Record Sound Samples</h2>
-    <p>Make the sound, then click Record.</p>
-
-    <label>
-      Sound class:
-      <select bind:value={selectedLabel}>
-        {#each classes as cls}
-          <option value={cls}>{cls.replace(/_/g, ' ')}</option>
-        {/each}
-      </select>
-    </label>
-
-    <label style="margin-left:1rem;">
-      Validator:
-      <select bind:value={selectedValidatorId} disabled={!useValidators}>
-        {#each validators as v}
-          <option value={v.id}>
-            {v.name} ({v.role})
-          </option>
-        {/each}
-      </select>
-    </label>
-
-    {#if useValidators}
-      <div style="margin-top:0.5rem;">
-        <label>
-          Validator code:
-          <input
-            type="password"
-            bind:value={typedPin}
-            style="margin-left:0.5rem; width:6rem;"
-          />
-        </label>
-        {#if validatorError}
-          <p style="color:#dc2626; margin:0.2rem 0 0 0;">
-            {validatorError}
-          </p>
-        {/if}
-      </div>
+    <div class="record-code-row">
+    
+      <span class="record-label">Enter a valid validator code to enable upload</span>
+      <input
+        type="password"
+        bind:value={typedPin}
+        class="record-code-input"
+      />
+    </div>
+    {#if validatorError}
+      <p class="record-error">
+        {validatorError}
+      </p>
     {/if}
+  {/if}
 
-    <br /><br />
-    <button on:click={recordSample}>
+  <div class="record-actions-row">
+  <p>Start the recording</p>
+    <button class="record-button" on:click={recordSample}>
       {isRecording ? '⏹ Stop Recording' : '⏺ Start Recording'}
     </button>
+    
+  </div>
 
-    <div style="margin-top:0.5rem;">
-      <label>
-        Or upload a sound file:
+  <div class="upload-row">
+    <div class="upload-left">
+      <span class="upload-label">Or upload a sound file</span>
+      <label class="upload-input">
+        <span class="upload-button">Browse…</span>
         <input
           type="file"
           accept="audio/*"
@@ -850,237 +886,304 @@
                 }
               });
           }}
-          style="margin-left:0.5rem;"
         />
-
-        {#if !isAuthenticated}
-          <span style="margin-left:0.5rem; font-size:0.9rem; color:#6b7280;">
-            Enter a valid validator code to enable upload
-          </span>
-        {:else if isUploading}
-          <span style="margin-left:0.5rem; font-size:0.9rem;">Processing upload…</span>
-        {/if}
-
+      </label>
+      <span class="upload-filename">No file selected</span>
     </div>
 
-    <p>{lastSaved}</p>
-    <p>Total samples saved (local): <strong>{sampleCount}</strong></p>
-  </section>
+    <div class="upload-right">
+      {#if !isAuthenticated}
+        
+      {:else if isUploading}
+        <span class="upload-hint">
+          Processing upload…
+        </span>
+      {/if}
+    </div>
+  </div>
 
-  <!-- 2a. Recorded samples -->
-  <section>
-    <h2>2a. Recorded Samples</h2>
-    {#if samples.length === 0}
-      <p>No samples recorded yet.</p>
-    {:else}
+  <p>{lastSaved}</p>
+  <p>Total samples saved (locally): <strong>{sampleCount}</strong></p>
+</section>
+
+
+    <section class="card">
+      <h2>2a. Recorded Samples</h2>
+      {#if samples.length === 0}
+        <p>No samples recorded yet.</p>
+      {:else}
+        <table border="1" cellpadding="4" cellspacing="0">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Class</th>
+              <th>Validator</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each samples as s}
+              <tr>
+                <td>{s.id}</td>
+                <td>{s.y.replace(/_/g, ' ')}</td>
+                <td>{validatorLabel(s.validatorId)}</td>
+                <td>
+                  {#if s.audioBlob}
+                    <audio
+                      src={URL.createObjectURL(s.audioBlob)}
+                      controls
+                      style="max-width:200px; display:block; margin-bottom:0.3rem;"
+                    ></audio>
+                  {/if}
+                  <button on:click={() => deleteSample(s.id)}>
+                    Delete
+                  </button>
+                  <select
+                    on:change={(e) =>
+                      changeSampleLabel(s.id, e.target.value)
+                    }
+                    style="margin-left:0.5rem;"
+                  >
+                    {#each classes as cls}
+                      <option value={cls} selected={cls === s.y}>
+                        {cls.replace(/_/g, ' ')}
+                      </option>
+                    {/each}
+                  </select>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </section>
+  {/if}
+
+  <!-- TAB 3: Class Manager -->
+  {#if activeTab === 'classes'}
+    <section class="card">
+      <h2>Class Manager (per context)</h2>
+      <p>
+        Activate or deactivate sound classes for each context. You can also add,
+        rename, or delete classes.
+      </p>
+
+      <!-- Add new class -->
+      <div style="margin-bottom:0.5rem;">
+        <input
+          placeholder="New class name (e.g., kettle)"
+          bind:value={newClassName}
+          style="padding:0.3rem; width:60%;"
+        />
+        <button on:click={addClass} style="margin-left:0.5rem;">
+          Add Class
+        </button>
+      </div>
+
+      <!-- Rename class -->
+      <div style="margin-bottom:0.5rem;">
+        <label>
+          Rename:
+          <select bind:value={classToRename}>
+            <option value=''>-- choose class --</option>
+            {#each classes as cls}
+              <option value={cls}>{cls.replace(/_/g, ' ')}</option>
+            {/each}
+          </select>
+        </label>
+        <input
+          placeholder="New name"
+          bind:value={renameTo}
+          style="padding:0.3rem; margin-left:0.5rem;"
+        />
+        <button on:click={renameClass} style="margin-left:0.5rem;">
+          Rename
+        </button>
+      </div>
+
       <table border="1" cellpadding="4" cellspacing="0">
         <thead>
           <tr>
-            <th>ID</th>
             <th>Class</th>
-            <th>Validator</th>
-            <th>Actions</th>
+            {#each contexts as ctx}
+              <th>{ctx.replace('_', ' ')}</th>
+            {/each}
+            <th>Action</th>
           </tr>
         </thead>
+
         <tbody>
-          {#each samples as s}
+          {#each classes as cls}
             <tr>
-              <td>{s.id}</td>
-              <td>{s.y.replace(/_/g, ' ')}</td>
-              <td>{validatorLabel(s.validatorId)}</td>
-              <td>
-                {#if s.audioBlob}
-                  <audio
-                    src={URL.createObjectURL(s.audioBlob)}
-                    controls
-                    style="max-width:200px; display:block; margin-bottom:0.3rem;"
-                  ></audio>
-                {/if}
-                <button on:click={() => deleteSample(s.id)}>
-                  Delete
-                </button>
-                <select
-                  on:change={(e) => changeSampleLabel(s.id, e.target.value)}
-                  style="margin-left:0.5rem;"
+              <td>{cls.replace('_', ' ')}</td>
+
+              {#each contexts as ctx}
+                <td style="text-align:center;">
+                  <input
+                    type="checkbox"
+                    checked={isClassActiveInContext(ctx, cls)}
+                    on:change={() => toggleClassActive(ctx, cls)}
+                  />
+                </td>
+              {/each}
+
+              <td style="text-align:center;">
+                <button
+                  on:click={() => deleteClass(cls)}
+                  title="Delete this class"
+                  class="delete-btn"
                 >
-                  {#each classes as cls}
-                    <option value={cls} selected={cls === s.y}>
-                      {cls.replace(/_/g, ' ')}
-                    </option>
-                  {/each}
-                </select>
+                  🗑
+                </button>
               </td>
             </tr>
           {/each}
         </tbody>
       </table>
-    {/if}
-  </section>
+    </section>
+  {/if}
 
+  <!-- TAB 4: Model & Live Prediction -->
+  {#if activeTab === 'model'}
+    <section class="card">
+      <h2>Prepare the Model</h2>
+      <p>This uses your locally recorded samples to build the KNN model.</p>
+      <button on:click={trainModel}>Prepare Model</button>
+      <p>{trainStatus}</p>
+    </section>
 
-  <!-- 2b. Class Manager -->
-  <section>
-    <h2>Class Manager (per context)</h2>
-    <p>Activate or deactivate sound classes for each context. You can also add, rename, or delete classes.</p>
+    <section class="card">
+      <h2>Live Prediction</h2>
+      <p>
+        Start listening to see what the system detects, filtered by your
+        context and sensitivity.
+      </p>
 
-    <!-- Add new class -->
-    <div style="margin-bottom:0.5rem;">
-      <input
-        placeholder="New class name (e.g., kettle)"
-        bind:value={newClassName}
-        style="padding:0.3rem; width:60%;"
-      />
-      <button on:click={addClass} style="margin-left:0.5rem;">Add Class</button>
-    </div>
+      {#if !listening}
+        <button on:click={startListening}>▶ Start Listening</button>
+      {:else}
+        <button on:click={stopListening} style="background:#dc2626">
+          ⏹ Stop Listening
+        </button>
+      {/if}
 
-    <!-- Rename class -->
-    <div style="margin-bottom:0.5rem;">
-      <label>
-        Rename:
-        <select bind:value={classToRename}>
-          <option value=''>-- choose class --</option>
-          {#each classes as cls}
-            <option value={cls}>{cls.replace(/_/g, ' ')}</option>
-          {/each}
-        </select>
-      </label>
-      <input
-        placeholder="New name"
-        bind:value={renameTo}
-        style="padding:0.3rem; margin-left:0.5rem;"
-      />
-      <button on:click={renameClass} style="margin-left:0.5rem;">Rename</button>
-    </div>
-
-    <table border="1" cellpadding="4" cellspacing="0">
-      <thead>
-        <tr>
-          <th>Class</th>
-          {#each contexts as ctx}
-            <th>{ctx.replace('_', ' ')}</th>
-          {/each}
-        </tr>
-      </thead>
-      <tbody>
-        {#each classes as cls}
-          <tr>
-            <td>
-              {cls.replace('_', ' ')}
-              <button
-                on:click={() => deleteClass(cls)}
-                style="margin-left:0.5rem; background:#dc2626;"
-              >
-                ✖
-              </button>
-            </td>
-            {#each contexts as ctx}
-              <td style="text-align:center;">
-                <input
-                  type="checkbox"
-                  checked={isClassActiveInContext(ctx, cls)}
-                  on:change={() => toggleClassActive(ctx, cls)}
-                />
-              </td>
+      {#if currentDetections.length}
+        <div class="prediction-box">
+          <h3>Detected sounds</h3>
+          <ul>
+            {#each currentDetections as d}
+              <li>
+                {d.label.replace(/_/g, ' ').toUpperCase()} – {d.confidence}%
+              </li>
             {/each}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </section>
-
-  <!-- 3. "Train" -->
-  <section>
-    <h2>3. Prepare the Model</h2>
-    <p>This uses your locally recorded samples to build the KNN model.</p>
-    <button on:click={trainModel}>🧠 Prepare Model</button>
-    <p>{trainStatus}</p>
-  </section>
-
-  <!-- 4. Live prediction -->
-  <section>
-    <h2>4. Live Prediction</h2>
-    <p>Start listening to see what the system detects, filtered by your context and sensitivity.</p>
-
-    {#if !listening}
-      <button on:click={startListening}>▶ Start Listening</button>
-    {:else}
-      <button on:click={stopListening} style="background:#dc2626">⏹ Stop Listening</button>
-    {/if}
-
-    {#if currentDetections.length}
-      <div class="prediction-box">
-        <h3>Detected sounds</h3>
-        <ul>
-          {#each currentDetections as d}
-            <li>
-              {d.label.replace(/_/g, ' ').toUpperCase()} – {d.confidence}%
-            </li>
-          {/each}
-        </ul>
-        <div class="pred-context">
-          Context: {currentContext.replace('_', ' ').toUpperCase()}
-        </div>
-      </div>
-    {/if}
-    {#if lastEvent}
-      <div style="margin-top:1rem;">
-        <p>
-          Was this alarm correct for
-          <strong>{lastEvent.label.replace(/_/g, ' ')}</strong>?
-        </p>
-        <button on:click={() => giveFeedback('correct')}>✅ Correct</button>
-        <button on:click={() => giveFeedback('wrong_label')} style="margin-left:0.5rem;">
-          ❌ Wrong label
-        </button>
-        <button on:click={() => giveFeedback('false_alarm')} style="margin-left:0.5rem;">
-          🚫 False alarm
-        </button>
-
-        {#if feedbackMode === 'relabel'}
-          <div style="margin-top:0.5rem;">
-            <label>
-              Actual class:
-              <select bind:value={relabelClass} style="margin-left:0.5rem;">
-                {#each classes as cls}
-                  <option value={cls}>{cls.replace(/_/g, ' ')}</option>
-                {/each}
-              </select>
-            </label>
-            <button on:click={submitRelabel} style="margin-left:0.5rem;">
-              Save feedback
-            </button>
+          </ul>
+          <div class="pred-context">
+            Context: {currentContext.replace('_', ' ').toUpperCase()}
           </div>
-        {/if}
+        </div>
+      {/if}
 
-        {#if feedbackStatus}
-          <p style="margin-top:0.5rem; color:#16a34a;">
-            {feedbackStatus}
+      {#if lastEvent}
+        <div style="margin-top:1rem;">
+          <p>
+            Was this alarm correct for
+            <strong>{lastEvent.label.replace(/_/g, ' ')}</strong>?
           </p>
-        {/if}
-      </div>
-    {/if}
+          <button on:click={() => giveFeedback('correct')}>
+            ✅ Correct
+          </button>
+          <button
+            on:click={() => giveFeedback('wrong_label')}
+            style="margin-left:0.5rem;"
+          >
+            ❌ Wrong label
+          </button>
+          <button
+            on:click={() => giveFeedback('false_alarm')}
+            style="margin-left:0.5rem;"
+          >
+            🚫 False alarm
+          </button>
 
+          {#if feedbackMode === 'relabel'}
+            <div style="margin-top:0.5rem;">
+              <label>
+                Actual class:
+                <select bind:value={relabelClass} style="margin-left:0.5rem;">
+                  {#each classes as cls}
+                    <option value={cls}>{cls.replace(/_/g, ' ')}</option>
+                  {/each}
+                </select>
+              </label>
+              <button on:click={submitRelabel} style="margin-left:0.5rem;">
+                Save feedback
+              </button>
+            </div>
+          {/if}
 
-  </section>
+          {#if feedbackStatus}
+            <p style="margin-top:0.5rem; color:#16a34a;">
+              {feedbackStatus}
+            </p>
+          {/if}
+        </div>
+      {/if}
+    </section>
+  {/if}
 </main>
 
 <style>
   main {
-    max-width: 700px;
+    max-width: 900px;
     margin: 2rem auto;
     font-family: sans-serif;
-    padding: 1rem;
+    padding: 1rem 1.5rem 2.5rem;
+  
   }
-  section {
-    background: white;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 1.5rem;
+
+  h1 {
+    margin-bottom: 5rem;
+    font-size:24px;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 0.5rem;
+    border-bottom: 1px solid #e5e7eb;
     margin-bottom: 1rem;
   }
-  h2 {
-    margin-top: 0;
+
+  .tabs button {
+    border: none;
+    background: transparent;
+    padding: 0.5rem 0.9rem;
+    font-weight: 300;
+    cursor: pointer;
+    border-radius: 0.5rem 0.5rem 0 0;
+    color: #4b5563;
   }
+  .tabs button:hover {
+    color: #45546b;
+	background: #cae6f9;
+}
+
+  .tabs button.active {
+    background: transparent;
+    border: 1px solid #e5e7eb;
+    border-bottom-color: #ffffff;
+    font-weight: 600;
+    color: #111827;
+  }
+
+  .card {
+    background: #ffffff;
+    border-radius: 0.75rem;
+    padding: 1.25rem 1.5rem;
+    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    margin-bottom: 1rem;
+  }
+
   button {
     padding: 0.5rem 1.2rem;
     margin: 0.3rem 0;
@@ -1091,23 +1194,32 @@
     border-radius: 6px;
     font-size: 1rem;
   }
+
   select {
     padding: 0.4rem;
     font-size: 1rem;
     margin-left: 0.5rem;
   }
+
   input[type='range'] {
     vertical-align: middle;
   }
+
   table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 0.5rem;
   }
+
   th,
   td {
     padding: 0.3rem 0.4rem;
   }
+
+  th {
+    background: #f3f4f6;
+  }
+
   .prediction-box {
     margin-top: 1rem;
     padding: 1.5rem;
@@ -1116,17 +1228,27 @@
     border-radius: 10px;
     text-align: center;
   }
-  .pred-label {
-    font-size: 2rem;
-    font-weight: bold;
-    color: #15803d;
-  }
-  .pred-confidence {
-    color: #166534;
-    margin-top: 0.5rem;
-  }
+
   .pred-context {
     color: #1f2937;
     margin-top: 0.3rem;
+  }
+
+  .delete-btn {
+    background: #dc2626;
+    border: none;
+    border-radius: 50%;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    cursor: pointer;
+  }
+
+  .delete-btn:hover {
+    background: #b91c1c;
   }
 </style>
