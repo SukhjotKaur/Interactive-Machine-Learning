@@ -309,17 +309,26 @@
 
     for (let i = 0; i < frameCount; i++) {
       const data = new Float32Array(analyser.frequencyBinCount);
-      analyser.getFloatFrequencyData(data); // values in dB (negative)
+      analyser.getFloatFrequencyData(data);
       let slice = Array.from(data.slice(0, 40));
 
-      // 1) convert to magnitudes and compress (reduce effect of loudness)
+      // 1) convert to magnitudes and compress
       slice = slice.map((v) => {
-        const mag = Math.pow(10, v / 20); // dB -> linear magnitude
-        return Math.log1p(mag); // log(1 + mag)
+        const mag = Math.pow(10, v / 20);
+        return Math.log1p(mag);
       });
 
+      // 1a) simple energy-based silence filtering
+      const energy =
+        slice.reduce((sum, v) => sum + Math.abs(v), 0) / slice.length;
+      if (energy < 0.01) {
+        // likely silence / very low energy; abort feature extraction
+        return null;
+      }
+
       // 2) normalize per frame (zero mean, unit variance)
-      const mean = slice.reduce((sum, v) => sum + v, 0) / slice.length;
+      const mean =
+        slice.reduce((sum, v) => sum + v, 0) / slice.length;
       let varSum = 0;
       for (const v of slice) {
         const d = v - mean;
@@ -547,18 +556,19 @@
   // ──────────────────────────────────────────────────────────────────────────
   let listening = false;
   let predictionInterval = null;
-  // old single-output state (kept for now but no longer used in UI)
   let currentPrediction = '';
   let currentConfidence = 0;
-  // NEW: list of all detected sounds above threshold
   let currentDetections = []; // each: { label, confidence }
-  // Track last alarm event for feedback
+
   let lastEvent = null; // { id, label, confidence, timestamp }
   let feedbackLog = []; // array of feedback objects
   let feedbackMode = null; // 'relabel' | null
   let relabelClass = classes[0];
   let lastFeedbackType = null; // 'correct' | 'wrong_label' | 'false_alarm' | null
   let feedbackStatus = ''; // short text shown after feedback
+
+  let predictionHistory = [];
+  const HISTORY_SIZE = 5;
 
   // minimum confidence (%) for any label to be considered
   const MIN_CONFIDENCE = 40;
@@ -630,14 +640,30 @@
 
       // keep old single-output vars for compatibility (highest one)
       if (detected.length > 0) {
-        const best = detected.reduce((a, b) => (b.confidence > a.confidence ? b : a));
-        currentPrediction = best.label;
-        currentConfidence = best.confidence;
+        const best = detected.reduce((a, b) =>
+          b.confidence > a.confidence ? b : a,
+        );
+
+        // --- temporal smoothing over recent labels ---
+        predictionHistory.push(best.label);
+        if (predictionHistory.length > HISTORY_SIZE) {
+          predictionHistory.shift();
+        }
+        const counts = {};
+        predictionHistory.forEach((lab) => {
+          counts[lab] = (counts[lab] || 0) + 1;
+        });
+        const [smoothedLabel] = Object.entries(counts).sort(
+          (a, b) => b[1] - a[1],
+        )[0];
+
+        currentPrediction = smoothedLabel;
+        currentConfidence = best.confidence; // keep latest confidence
 
         const now = Date.now();
         lastEvent = {
           id: now,
-          label: best.label,
+          label: smoothedLabel,
           confidence: best.confidence,
           timestamp: now,
           features,
@@ -645,7 +671,9 @@
       } else {
         currentPrediction = '';
         currentConfidence = 0;
+        currentDetections = [];
         lastEvent = null;
+        predictionHistory = [];
       }
     }, 1000);
   }
