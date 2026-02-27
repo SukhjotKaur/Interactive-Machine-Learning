@@ -469,16 +469,18 @@
   // E. LABEL + RECORDING  (LOCAL FOR NOW)
   // ──────────────────────────────────────────────────────────────────────────
   async function recordSample() {
-    const v = currentValidator();
-    if (!v) {
-      alert('Please choose a validator');
-      return;
+    if (useValidators) {
+      const v = currentValidator();
+      if (!v) {
+        alert('Please choose a validator');
+        return;
+      }
+      if (typedPin !== v.pin) {
+        validatorError = `Wrong code for ${v.name}`;
+        return;
+      }
+      validatorError = '';
     }
-    if (typedPin !== v.pin) {
-      validatorError = `Wrong code for ${v.name}`;
-      return;
-    }
-    validatorError = '';
 
     if (!micActive) {
       alert('Please start the microphone first!');
@@ -514,7 +516,7 @@
           id,
           x: features,
           y: selectedLabel,
-          validatorId: currentValidator()?.id ?? null,
+          validatorId: useValidators ? currentValidator()?.id ?? null : null,
           audioBlob,
         },
       ];
